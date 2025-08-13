@@ -103,6 +103,56 @@ def test_convert_index_info_to_schema():
     schema = IndexSchema.from_dict(schema_dict)
     assert schema.index.name == index_info["index_name"]
 
+def test_convert_memorydb_format():
+    memorydb_info = {
+        "index_name": "image_summaries",
+        "key_prefixes": ["summary"],
+        "fields": [
+            [
+                "identifier",
+                "content",
+                "attribute",
+                "content",
+                "type",
+                "TEXT",
+                "WEIGHT",
+                "1",
+            ],
+            [
+                "identifier",
+                "doc_id",
+                "attribute",
+                "doc_id",
+                "type",
+                "TAG",
+                "SEPARATOR",
+                ",",
+            ],
+            [
+                "identifier",
+                "content_vector",
+                "attribute",
+                "content_vector",
+                "type",
+                "VECTOR",
+                "algorithm",
+                "FLAT",
+                "data_type",
+                "FLOAT32",
+                "dim",
+                1536,
+                "distance_metric",
+                "COSINE",
+            ],
+        ],
+    }
+    schema_dict = convert_index_info_to_schema(memorydb_info)
+    assert "index" in schema_dict
+    assert "fields" in schema_dict
+    assert len(schema_dict["fields"]) == len(memorydb_info["fields"])
+
+    schema = IndexSchema.from_dict(schema_dict)
+    assert schema.index.name == memorydb_info["index_name"]
 
 def test_validate_modules_exist_search():
     validate_modules(
