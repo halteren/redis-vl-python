@@ -85,6 +85,20 @@ def convert_index_info_to_schema(index_info: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Schema dictionary.
     """
+
+    # Check if this is MemoryDB format (has 'fields' and 'key_prefixes' but no 'index_definition')
+    if 'fields' in index_info and 'key_prefixes' in index_info and 'index_definition' not in index_info:
+        return _convert_memorydb_format(index_info)
+    
+    # Check if this is Redis Stack format (has 'index_definition')
+    elif 'index_definition' in index_info:
+        return _convert_redis_stack_format(index_info)
+    
+    else:
+        raise ValueError(f"Unrecognized index info format. Available keys: {list(index_info.keys())}")
+
+def _convert_redis_stack_format(index_info: Dict[str, Any]) -> Dict[str, Any]:
+    """Redis Stack converter logic."""
     index_name = index_info["index_name"]
     prefixes = index_info["index_definition"][3][0]
     storage_type = index_info["index_definition"][1].lower()
@@ -154,6 +168,72 @@ def convert_index_info_to_schema(index_info: Dict[str, Any]) -> Dict[str, Any]:
         "fields": schema_fields,
     }
 
+def _convert_memorydb_format(info_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert MemoryDB format to schema dictionary."""
+    # Extract basic information
+    index_name = info_dict.get('index_name', '')
+    key_prefixes = info_dict.get('key_prefixes', [])
+    prefix = key_prefixes[0] if key_prefixes else ''
+
+    # Parse fields from MemoryDB format
+    fields = []
+    field_data = info_dict.get('fields', [])
+
+    for field in field_data:
+        if isinstance(field, list) and len(field) >= 6:
+            field_name = field[1]  # The actual field name
+            field_type = field[5]  # Field type
+
+            # Create field in RedisVL format
+            field_info = {
+                'name': field_name,
+                'type': field_type.lower(),  # RedisVL expects lowercase types
+                'attrs': {}  # Initialize attrs dictionary
+            }
+            
+            # Handle vector fields with vector_params
+            if field_type == 'VECTOR' and len(field) > 8:
+                # Look for vector_params in the field data
+                for i in range(6, len(field)):
+                    if field[i] == 'vector_params' and i + 1 < len(field):
+                        params_list = field[i + 1]
+                        if isinstance(params_list, list):
+                            # Parse vector parameters
+                            j = 0
+                            while j < len(params_list) - 1:
+                                param_key = params_list[j]
+                                param_value = params_list[j + 1]
+                                
+                                # Map MemoryDB parameter names to RedisVL format
+                                if param_key == 'algorithm':
+                                    field_info['attrs']['algorithm'] = param_value.lower()
+                                elif param_key == 'data_type':
+                                    field_info['attrs']['datatype'] = param_value.lower()
+                                elif param_key == 'dimension':
+                                    field_info['attrs']['dims'] = int(param_value)
+                                elif param_key == 'distance_metric':
+                                    field_info['attrs']['distance_metric'] = param_value.lower()
+                                
+                                j += 2
+                        break
+            
+            # Handle text fields - add default weight for text fields
+            elif field_type == 'TEXT':
+                field_info['attrs']['weight'] = '1'
+            
+            # Handle numeric fields - they typically don't need special attrs
+            # but we keep the empty attrs dict for consistency
+            
+            fields.append(field_info)
+
+    return {
+        'index': {
+            'name': index_name,
+            'prefix': prefix,
+            'storage_type': 'hash'
+        },
+        'fields': fields
+    }
 
 def validate_modules(
     installed_modules: Dict[str, Any],
