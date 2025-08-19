@@ -164,7 +164,7 @@ class SemanticCache(BaseLLMCache):
             existing_index = SearchIndex.from_existing(
                 name, redis_client=self._index.client
             )
-            if self._are_schemas_equivalent(existing_index.schema.to_dict(), self._index.schema.to_dict()):
+            if not self._are_schemas_equivalent(existing_index.schema.to_dict(), self._index.schema.to_dict()):
                 raise ValueError(
                     f"Existing index {name} schema does not match the user provided schema for the semantic cache. "
                     "If you wish to overwrite the index schema, set overwrite=True during initialization."
@@ -837,7 +837,7 @@ class SemanticCache(BaseLLMCache):
         return hashify(prompt, filters)
 
     def _are_schemas_equivalent(self, schema1: dict, schema2: dict) -> bool:
-        """Check if two schemas are equivalent, ignoring the order of fields.
+        """Check if two schemas are equivalent, ignoring the order of fields and normalizing values.
 
         Args:
             schema1 (dict): The first schema to compare.
@@ -846,11 +846,70 @@ class SemanticCache(BaseLLMCache):
         Returns:
             bool: True if the schemas are equivalent, False otherwise.
         """
+        def normalize_value(value):
+            """Normalize values for comparison (e.g., 1 -> 1.0)"""
+            if isinstance(value, int):
+                return float(value)
+            return value
+        
+        def normalize_attrs(attrs):
+            """Normalize attributes by converting values"""
+            if not isinstance(attrs, dict):
+                return attrs
+            return {key: normalize_value(value) for key, value in attrs.items()}
+        
+        def normalize_field(field):
+            """Normalize a field by sorting its keys and normalizing attrs"""
+            if not isinstance(field, dict):
+                return field
+            
+            normalized = {}
+            for key, value in field.items():
+                if key == 'attrs':
+                    normalized[key] = normalize_attrs(value)
+                else:
+                    normalized[key] = normalize_value(value)
+            
+            # Return sorted dict to ensure consistent ordering
+            return {key: normalized[key] for key in sorted(normalized.keys())}
+        
         def normalize_schema(schema: dict) -> dict:
-            """Normalize a schema by sorting its fields."""
+            """Normalize a schema by sorting fields by name and normalizing values."""
             if not isinstance(schema, dict):
                 raise TypeError("Schemas must be dictionaries.")
+            
+            normalized = {}
+            for key, value in schema.items():
+                if key == 'fields':
+                    # Sort fields by name for consistent comparison
+                    if isinstance(value, list):
+                        normalized_fields = [normalize_field(field) for field in value]
+                        # Sort by field name to ignore order
+                        normalized[key] = sorted(normalized_fields, key=lambda x: x.get('name', ''))
+                    else:
+                        normalized[key] = value
+                elif key == 'index':
+                    # Sort index keys for consistency
+                    if isinstance(value, dict):
+                        normalized[key] = {k: value[k] for k in sorted(value.keys())}
+                    else:
+                        normalized[key] = value
+                else:
+                    normalized[key] = normalize_value(value)
+            
+            # Return sorted dict to ensure consistent ordering
+            return {key: normalized[key] for key in sorted(normalized.keys())}
 
-            return {key: schema[key] for key in sorted(schema)}
-
-        return normalize_schema(schema1) == normalize_schema(schema2)
+        try:
+            normalized_schema1 = normalize_schema(schema1)
+            normalized_schema2 = normalize_schema(schema2)
+            
+            # Log normalized schemas for debugging if they're not equal
+            if normalized_schema1 != normalized_schema2:
+                logger.debug(f"Normalized schema1: {normalized_schema1}")
+                logger.debug(f"Normalized schema2: {normalized_schema2}")
+            
+            return normalized_schema1 == normalized_schema2
+        except Exception as e:
+            logger.error(f"Error comparing schemas: {e}")
+            return False
