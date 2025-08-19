@@ -164,7 +164,7 @@ class SemanticCache(BaseLLMCache):
             existing_index = SearchIndex.from_existing(
                 name, redis_client=self._index.client
             )
-            if existing_index.schema.to_dict() != self._index.schema.to_dict():
+            if self._are_schemas_equivalent(existing_index.schema.to_dict(), self._index.schema.to_dict()):
                 raise ValueError(
                     f"Existing index {name} schema does not match the user provided schema for the semantic cache. "
                     "If you wish to overwrite the index schema, set overwrite=True during initialization."
@@ -835,3 +835,22 @@ class SemanticCache(BaseLLMCache):
             str: A deterministic entry ID based on the prompt and filters.
         """
         return hashify(prompt, filters)
+
+    def _are_schemas_equivalent(self, schema1: dict, schema2: dict) -> bool:
+        """Check if two schemas are equivalent, ignoring the order of fields.
+
+        Args:
+            schema1 (dict): The first schema to compare.
+            schema2 (dict): The second schema to compare.
+
+        Returns:
+            bool: True if the schemas are equivalent, False otherwise.
+        """
+        def normalize_schema(schema: dict) -> dict:
+            """Normalize a schema by sorting its fields."""
+            if not isinstance(schema, dict):
+                raise TypeError("Schemas must be dictionaries.")
+
+            return {key: schema[key] for key in sorted(schema)}
+
+        return normalize_schema(schema1) == normalize_schema(schema2)
